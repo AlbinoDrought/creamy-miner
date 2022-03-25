@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "snowblossom.trie.proto";
+option java_outer_classname = "TrieProto";
+option go_package = "go.snowblossom/internal/sbproto/trie";
+
+package snowblossom;
+
+message TrieNode {
+  bytes hash = 1;
+  bytes prefix = 2;
+
+  // Leaf and children are no longer mutually exclusive
+  // Can have one or both, to support variable key length
+  repeated ChildEntry children = 3;
+  bool is_leaf = 4;
+  bytes leaf_data = 5;
+}
+
+message ChildEntry {
+  bytes key = 1; //postfix
+  bytes hash = 2;
+}
+
