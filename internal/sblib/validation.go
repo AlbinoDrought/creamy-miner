@@ -37,7 +37,7 @@ func CheckProof(proof *snowblossom.SnowPowProof, expectedMerkleRoot []byte, snow
 	end := targetIndex
 	dist := int64(1)
 
-	for tip < len(stack) && end <= wordCount {
+	for (len(stack)-tip) > 0 && end <= wordCount {
 		dist *= 2
 		start = start - (start % dist)
 		end = start + dist

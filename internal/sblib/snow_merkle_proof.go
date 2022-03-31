@@ -206,13 +206,15 @@ func NewSnowMerkleProof(snowPath string, snowBase string) (SnowMerkleProof, erro
 	}
 
 	totalWords := snowFileLength / sbconst.SnowMerkleHashLen
+
 	deckCount := getNumberOfDecks(totalWords)
+	h := int64(1)
 
 	deckMap := make(map[int64]ReadAtCloser, deckCount)
 
-	h := int64(1)
 	for i := 0; i < deckCount; i++ {
 		h = h * sbconst.DeckEntries
+
 		letter := byte('a' + i)
 
 		deckPath := path.Join(snowPath, snowBase+".deck."+string(letter))
