@@ -109,8 +109,11 @@ func LessThanTarget(foundHash []byte, target []byte) bool {
 	// [removed quickly reject nonsense loop]
 
 	for i := 0; i < sbconst.TargetLength; i++ {
-		if target[i] > foundHash[i] {
-			return false // todo: verify this logic
+		if foundHash[i] > target[i] {
+			return false
+		}
+		if foundHash[i] < target[i] {
+			return true
 		}
 	}
 
