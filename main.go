@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -34,18 +35,36 @@ var (
 func main() {
 	var err error
 
+	pool := os.Getenv("CREAMY_MINER_POOL")
+	if pool == "" {
+		pool = "localhost:23380"
+	}
+
+	address := os.Getenv("CREAMY_MINER_ADDRESS")
+	if address == "" {
+		address = "c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc"
+	}
+
 	baseLogger = logrus.New()
 	baseLogger.Formatter = &logrus.TextFormatter{
 		FullTimestamp: true,
 	}
 
+	baseLogger.
+		WithField("pool", pool).
+		WithField("address", address).
+		Info("loaded config")
+
 	fields, err = sblib.LoadFields("fields")
 	if err != nil {
 		panic(err)
 	}
+	baseLogger.
+		WithField("field-count", len(fields)).
+		Info("loaded fields")
 
 	// conn, err := grpc.Dial("snowypool.com:23380", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	conn, err := grpc.Dial("localhost:23380", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(pool, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		panic(err)
 	}
@@ -89,7 +108,7 @@ func main() {
 	for {
 		log.Printf("opening GetWork connection")
 		stream, err := client.GetWork(context.Background(), &mining_pool.GetWorkRequest{
-			PayToAddress: "c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc",
+			PayToAddress: address,
 		})
 		if err != nil {
 			log.WithError(err).Warn("failed to open GetWork stream!")
