@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -48,7 +49,12 @@ func (ps *poolState) Submit(work *mining_pool.WorkSubmitRequest) (*snowblossom.S
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
+	attempts := 0
 	for ps.client == nil {
+		attempts++
+		if attempts > 10 {
+			return nil, errors.New("no client available after 10s")
+		}
 		ps.lock.RUnlock()
 		time.Sleep(5 * time.Second)
 		ps.lock.RLock()
@@ -233,7 +239,7 @@ func main() {
 		newShareCount := poolStates[workUnit.pool].shares
 		newBlockHeight := uint64(workUnit.work.Header.BlockHeight)
 
-		if newShareCount >= currentShareCount && newBlockHeight <= currentBlockHeight {
+		if newShareCount > currentShareCount && newBlockHeight <= currentBlockHeight {
 			log.
 				WithField("pool", workUnit.pool).
 				WithField("work-id", workUnit.work.WorkId).
@@ -355,7 +361,10 @@ func minerThread(threadID int) {
 
 			atomic.AddInt64(&sharesPerformed, 1)
 			if sblib.LessThanTarget(snowContext, reportTarget) {
-				log.Printf("Found passable solution: %X", snowContext)
+				log.
+					WithField("pool", workPool).
+					WithField("context", fmt.Sprintf("%X", snowContext)).
+					Info("passable solution")
 
 				workHeader.Nonce = nonce
 
@@ -378,7 +387,10 @@ func minerThread(threadID int) {
 					continue
 				}
 
-				log.WithField("reply", reply).Info("submitted!")
+				log.
+					WithField("pool", workPool).
+					WithField("reply", reply).
+					Info("submitted!")
 			}
 		}
 	}
