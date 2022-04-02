@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,17 @@ func main() {
 		address = "c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc"
 	}
 
+	threadMultiplierString := os.Getenv("CREAMY_MINER_THREAD_MULTIPLIER")
+	if threadMultiplierString == "" {
+		threadMultiplierString = "10"
+	}
+	threadMultiplier, err := strconv.Atoi(threadMultiplierString)
+	if err != nil {
+		panic(err)
+	}
+
+	numThreads := runtime.NumCPU() * threadMultiplier
+
 	baseLogger = logrus.New()
 	baseLogger.Formatter = &logrus.TextFormatter{
 		FullTimestamp: true,
@@ -53,6 +65,8 @@ func main() {
 	baseLogger.
 		WithField("pool", pool).
 		WithField("address", address).
+		WithField("thread-multiplier", threadMultiplier).
+		WithField("total-num-threads", numThreads).
 		Info("loaded config")
 
 	fields, err = sblib.LoadFields("fields")
@@ -71,7 +85,7 @@ func main() {
 
 	client = mining_pool.NewMiningPoolServiceClient(conn)
 
-	for i := 0; i < runtime.NumCPU()*10; i++ {
+	for i := 0; i < numThreads; i++ {
 		go func(i int) {
 			minerThread(i)
 		}(i)
@@ -187,24 +201,41 @@ func minerThread(threadID int) {
 		}
 		currentWorkUnitLock.RUnlock()
 		merkleProof := fields[int(workHeader.SnowField)]
-		workingSince := time.Now()
+		// workingSince := time.Now()
+		copy(nonce, workHeader.Nonce[:4])
+		rand.Read(nonce[4:])
 		log.Debug("activated work unit #%v", uint64(workID))
 
 		// repeatable
+		quickies := 0
 		for {
-			if time.Since(workingSince) > 75*time.Second {
+			quickies++
+			if quickies > 10 { // only check every ten loops
+				quickies = 0
+				// if time.Since(workingSince) > 75*time.Second {
 				activeWorkID := atomic.AddInt32(&currentWorkID, 0)
 				if workID != activeWorkID {
 					break // update work unit
 				}
+				// }
 			}
 
-			if _, err := rand.Read(nonce); err != nil {
+			// if threadID%2 == 0 {
+			// read from rand
+			if _, err := rand.Read(nonce[4:]); err != nil {
 				panic(err)
 			}
-			copy(nonce, workHeader.Nonce[:4])
+			/*
+					} else {
+					// just add 1
+					binary.BigEndian.PutUint64(
+						nonce[4:],
+						binary.BigEndian.Uint64(nonce[4:])+1,
+					)
+				}
+			*/
 
-			snowContext, err := sblib.HashHeaderBits(&workHeader, nonce, md)
+			snowContext, err := sblib.HashHeaderBits(&workHeader, nonce, md) // todo: this could be generated without I/O waits
 			if err != nil {
 				panic(err)
 			}
