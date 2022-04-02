@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"runtime"
 	"strconv"
@@ -77,6 +78,38 @@ type poolWork struct {
 func main() {
 	var err error
 
+	baseLogger = logrus.New()
+	baseLogger.Formatter = &logrus.TextFormatter{
+		FullTimestamp: true,
+	}
+
+	envFilePath := os.Getenv("CREAMY_MINER_ENV_FILE")
+	if envFilePath != "" {
+		log := baseLogger.WithField("env-file-path", envFilePath)
+
+		envFile, err := ioutil.ReadFile(envFilePath)
+		if err != nil {
+			log.WithError(err).Fatal("failed opening env file, does it exist?")
+		}
+
+		loaded := 0
+		for line, envFileLine := range strings.Split(string(envFile), "\n") {
+			if envFileLine == "" || envFileLine[0] == '#' {
+				continue
+			}
+			envFilePair := strings.SplitN(envFileLine, "=", 2)
+			if len(envFilePair) != 2 {
+				log.WithField("line", line).WithField("contents", envFileLine).Fatal("line must be in format of KEY=VALUE")
+			}
+
+			if err := os.Setenv(envFilePair[0], envFilePair[1]); err != nil {
+				log.WithField("line", line).WithField("contents", envFileLine).WithError(err).Fatal("failed to set env")
+			}
+			loaded++
+		}
+		log.WithField("loaded-vars", loaded).Info("loaded env file!")
+	}
+
 	poolsStr := os.Getenv("CREAMY_MINER_POOLS")
 	if poolsStr == "" {
 		poolsStr = os.Getenv("CREAMY_MINER_POOL")
@@ -107,27 +140,32 @@ func main() {
 		panic(err)
 	}
 
-	numThreads := runtime.NumCPU() * threadMultiplier
-
-	baseLogger = logrus.New()
-	baseLogger.Formatter = &logrus.TextFormatter{
-		FullTimestamp: true,
+	fieldsDir := os.Getenv("CREAMY_MINER_FIELDS_DIR")
+	if fieldsDir == "" {
+		fieldsDir = "fields"
 	}
+
+	numThreads := runtime.NumCPU() * threadMultiplier
 
 	baseLogger.
 		WithField("pools", pools).
 		WithField("address", address).
 		WithField("thread-multiplier", threadMultiplier).
 		WithField("total-num-threads", numThreads).
+		WithField("fields-dir", fieldsDir).
 		Info("loaded config")
 
-	fields, err = sblib.LoadFields("fields")
+	fields, err = sblib.LoadFields(fieldsDir)
 	if err != nil {
 		panic(err)
 	}
 	baseLogger.
 		WithField("field-count", len(fields)).
 		Info("loaded fields")
+
+	if len(fields) == 0 {
+		baseLogger.Fatal("no fields loaded")
+	}
 
 	workUnitChan := make(chan poolWork, len(poolStates)*5)
 
