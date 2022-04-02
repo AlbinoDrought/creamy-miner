@@ -4,14 +4,15 @@
 
 Configured through environment variables.
 
-| Env Var                        | Description                                                                      | Default                                  | Example Value                            |
-|--------------------------------|----------------------------------------------------------------------------------|------------------------------------------|------------------------------------------|
-| CREAMY_MINER_ENV_FILE          | A file to load env vars from  Should contain one KEY=VALUE pair per line         | (none)                                   | /etc/creamy-miner.env                    |
-| CREAMY_MINER_POOLS             | A list of pools to work for  Will try to get shares in as many pools as possible | (none)                                   | localhost:23380,127.0.0.1:23380          |
-| CREAMY_MINER_POOL              | A single pool to work for  Ignored if CREAMY_MINER_POOLS is set                  | localhost:23380                          | localhost:23380                          |
-| CREAMY_MINER_ADDRESS           | Address to mine to                                                               | c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc | c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc |
-| CREAMY_MINER_FIELDS_DIR        | Location of snowblossom.1-10 directories                                         | fields                                   | /etc/snowblossom/fields/mainnet          |
-| CREAMY_MINER_THREAD_MULTIPLIER | Multiplier of threads to run based on os.NumCPU                                  | 10                                       | 1                                        |     
+| Env Var                        | Description                                                                          | Default                                  | Example Value                            |
+|--------------------------------|--------------------------------------------------------------------------------------|------------------------------------------|------------------------------------------|
+| CREAMY_MINER_ENV_FILE          | A file to load env vars from  Should contain one KEY=VALUE pair per line             | (none)                                   | /etc/creamy-miner.env                    |
+| CREAMY_MINER_POOLS             | A list of pools to work for  Will try to get shares in as many pools as possible     | (none)                                   | localhost:23380,127.0.0.1:23380          |
+| CREAMY_MINER_POOL              | A single pool to work for  Ignored if CREAMY_MINER_POOLS is set                      | localhost:23380                          | localhost:23380                          |
+| CREAMY_MINER_ADDRESS           | Address to mine to                                                                   | c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc | c04rt84spfjc9xy88snx5r256qv0tmy664zcdrnc |
+| CREAMY_MINER_FIELDS_DIRS       | Comma-separated locations of snowblossom.1-10 directories                            | (none)                                   | ./fields,/otherdrive/fields              |
+| CREAMY_MINER_FIELDS_DIR        | Location of snowblossom.1-10 directories. Ignored if CREAMY_MINER_FIELDS_DIRS is set | fields                                   | /etc/snowblossom/fields/mainnet          |
+| CREAMY_MINER_THREAD_MULTIPLIER | Multiplier of threads to run based on os.NumCPU                                      | 10                                       | 1                                        |     
 
 ## Configuring Systemd Service
 

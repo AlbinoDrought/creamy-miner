@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.snowblossom/internal/extra"
 	"go.snowblossom/internal/sbconst"
 	"go.snowblossom/internal/sblib"
 	"go.snowblossom/internal/sbproto/mining_pool"
@@ -140,10 +141,15 @@ func main() {
 		panic(err)
 	}
 
-	fieldsDir := os.Getenv("CREAMY_MINER_FIELDS_DIR")
-	if fieldsDir == "" {
-		fieldsDir = "fields"
+	fieldsStr := os.Getenv("CREAMY_MINER_FIELDS_DIRS")
+	if fieldsStr == "" {
+		fieldsStr = os.Getenv("CREAMY_MINER_FIELDS_DIR")
+		if fieldsStr == "" {
+			fieldsStr = "fields"
+		}
 	}
+
+	fieldsDirs := strings.Split(fieldsStr, ",")
 
 	numThreads := runtime.NumCPU() * threadMultiplier
 
@@ -152,16 +158,29 @@ func main() {
 		WithField("address", address).
 		WithField("thread-multiplier", threadMultiplier).
 		WithField("total-num-threads", numThreads).
-		WithField("fields-dir", fieldsDir).
+		WithField("fields-dirs", fieldsDirs).
 		Info("loaded config")
 
-	fields, err = sblib.LoadFields(fieldsDir)
-	if err != nil {
-		panic(err)
+	totalFields := 0
+	allFields := make([]map[int]sblib.SnowMerkleProof, len(fieldsDirs))
+	for i, fieldsDir := range fieldsDirs {
+		allFields[i], err = sblib.LoadFields(fieldsDir)
+		if err != nil {
+			baseLogger.WithField("fields-dir", fieldsDir).WithError(err).Fatal("failed to load fields dir")
+		}
+		baseLogger.
+			WithField("fields-dir", fieldsDir).
+			WithField("field-count", len(allFields[i])).
+			Info("loaded fields")
+		totalFields += len(allFields[i])
 	}
+
+	fields = extra.MergeFields(allFields)
+
 	baseLogger.
-		WithField("field-count", len(fields)).
-		Info("loaded fields")
+		WithField("field-count-pre-merge", totalFields).
+		WithField("field-count-post-merge", len(fields)).
+		Info("finished loading and merging all fields")
 
 	if len(fields) == 0 {
 		baseLogger.Fatal("no fields loaded")
