@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ import (
 var (
 	fields              map[int]sblib.SnowMerkleProof
 	client              mining_pool.MiningPoolServiceClient
+	currentPool         string
 	currentWorkID       int32
 	currentWorkUnit     *mining_pool.WorkUnit
 	currentWorkUnitLock sync.RWMutex
@@ -31,14 +33,58 @@ var (
 	sharesPerformed          int64
 
 	baseLogger *logrus.Logger
+
+	poolStates map[string]*poolState
 )
+
+type poolState struct {
+	shareSubmitter chan *mining_pool.WorkSubmitRequest
+	shares         uint64
+	client         mining_pool.MiningPoolServiceClient
+	lock           sync.RWMutex
+}
+
+func (ps *poolState) Submit(work *mining_pool.WorkSubmitRequest) (*snowblossom.SubmitReply, error) {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	for ps.client == nil {
+		ps.lock.RUnlock()
+		time.Sleep(5 * time.Second)
+		ps.lock.RLock()
+	}
+
+	reply, err := ps.client.SubmitWork(context.Background(), work)
+	if err != nil {
+		return nil, err
+	}
+
+	atomic.AddUint64(&ps.shares, 1)
+	return reply, nil
+}
+
+type poolWork struct {
+	pool string
+	work *mining_pool.WorkUnit
+}
 
 func main() {
 	var err error
 
-	pool := os.Getenv("CREAMY_MINER_POOL")
-	if pool == "" {
-		pool = "localhost:23380"
+	poolsStr := os.Getenv("CREAMY_MINER_POOLS")
+	if poolsStr == "" {
+		poolsStr = os.Getenv("CREAMY_MINER_POOL")
+		if poolsStr == "" {
+			poolsStr = "localhost:23380"
+		}
+	}
+	pools := strings.Split(poolsStr, ",")
+
+	poolStates = map[string]*poolState{}
+	for _, pool := range pools {
+		poolStates[pool] = &poolState{
+			shareSubmitter: make(chan *mining_pool.WorkSubmitRequest),
+		}
 	}
 
 	address := os.Getenv("CREAMY_MINER_ADDRESS")
@@ -63,7 +109,7 @@ func main() {
 	}
 
 	baseLogger.
-		WithField("pool", pool).
+		WithField("pools", pools).
 		WithField("address", address).
 		WithField("thread-multiplier", threadMultiplier).
 		WithField("total-num-threads", numThreads).
@@ -77,20 +123,73 @@ func main() {
 		WithField("field-count", len(fields)).
 		Info("loaded fields")
 
-	// conn, err := grpc.Dial("snowypool.com:23380", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	conn, err := grpc.Dial(pool, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(err)
+	workUnitChan := make(chan poolWork, len(poolStates)*5)
+
+	// pool recvWork threads
+	for pool := range poolStates {
+		go func(pool string) {
+			log := baseLogger.
+				WithField("thread", "pool-conn").
+				WithField("pool", pool)
+
+			sleepDuration := time.Second
+
+			for {
+				conn, err := grpc.Dial(pool, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if err != nil {
+					log.WithError(err).
+						WithField("sleep-duration", sleepDuration).
+						Warn("failed to dial pool!")
+					time.Sleep(sleepDuration)
+					if sleepDuration < 30*time.Minute {
+						sleepDuration *= 2
+					}
+					continue
+				}
+				sleepDuration = time.Second
+
+				client := mining_pool.NewMiningPoolServiceClient(conn)
+
+				poolStates[pool].lock.Lock()
+				poolStates[pool].client = client
+				poolStates[pool].lock.Unlock()
+
+				log.Info("opening GetWork connection")
+				stream, err := client.GetWork(context.Background(), &mining_pool.GetWorkRequest{
+					PayToAddress: address,
+				})
+				if err != nil {
+					log.WithError(err).Warn("failed to open GetWork stream!")
+					time.Sleep(10 * time.Second)
+					continue // retry connection
+				}
+
+				for {
+					log.Debug("waiting for work")
+					work, err := stream.Recv()
+					if err != nil {
+						log.WithError(err).Warn("failed to receive work!")
+						time.Sleep(10 * time.Second)
+						break // retry connection
+					}
+
+					log.Debug("received work: %+v", work)
+					workUnitChan <- poolWork{pool, work}
+					log.Debug("assigned work")
+				}
+
+			}
+		}(pool)
 	}
 
-	client = mining_pool.NewMiningPoolServiceClient(conn)
-
+	// miner threads
 	for i := 0; i < numThreads; i++ {
 		go func(i int) {
 			minerThread(i)
 		}(i)
 	}
 
+	// print stats every 15s
 	sharesPerformedLastDrain = time.Now()
 	go func() {
 		log := baseLogger.WithField("thread", "benchmark")
@@ -105,6 +204,7 @@ func main() {
 		}
 	}()
 
+	// one-time print after we've computed a single hash
 	go func() {
 		log := baseLogger.WithField("thread", "start-watcher")
 		for {
@@ -118,39 +218,41 @@ func main() {
 		}
 	}()
 
+	// publish work to workers
 	log := baseLogger.WithField("thread", "main")
-	for {
-		log.Printf("opening GetWork connection")
-		stream, err := client.GetWork(context.Background(), &mining_pool.GetWorkRequest{
-			PayToAddress: address,
-		})
-		if err != nil {
-			log.WithError(err).Warn("failed to open GetWork stream!")
-			time.Sleep(10 * time.Second)
-			continue // retry connection
+	for workUnit := range workUnitChan {
+		currentShareCount := uint64(0)
+		currentBlockHeight := uint64(0)
+		if currentPool != "" {
+			currentShareCount = poolStates[currentPool].shares
+			if currentWorkUnit != nil {
+				currentBlockHeight = uint64(currentWorkUnit.Header.BlockHeight)
+			}
 		}
 
-		lastBlockHeight := int32(0)
-		for {
-			log.Debug("waiting for work")
-			work, err := stream.Recv()
-			if err != nil {
-				log.WithError(err).Warn("failed to receive work!")
-				time.Sleep(10 * time.Second)
-				break // retry connection
-			}
+		newShareCount := poolStates[workUnit.pool].shares
+		newBlockHeight := uint64(workUnit.work.Header.BlockHeight)
 
-			if work.Header.BlockHeight != lastBlockHeight {
-				log.WithField("block-height", work.Header.BlockHeight).Info("workunit for new blockheight")
-				lastBlockHeight = work.Header.BlockHeight
-			}
+		if newShareCount >= currentShareCount && newBlockHeight <= currentBlockHeight {
+			log.
+				WithField("pool", workUnit.pool).
+				WithField("work-id", workUnit.work.WorkId).
+				Debug("ignoring work unit")
+			continue
+		}
 
-			log.Debug("received work: %+v", work)
-			currentWorkUnitLock.Lock()
-			currentWorkUnit = work
-			currentWorkID = work.WorkId
-			currentWorkUnitLock.Unlock()
-			log.Debug("assigned work")
+		log.
+			WithField("pool", workUnit.pool).
+			WithField("work-id", workUnit.work.WorkId).
+			Debug("accepting work unit")
+		currentWorkUnitLock.Lock()
+		currentPool = workUnit.pool
+		currentWorkUnit = workUnit.work
+		currentWorkID = workUnit.work.WorkId
+		currentWorkUnitLock.Unlock()
+
+		if newBlockHeight != currentBlockHeight {
+			log.WithField("pool", workUnit.pool).WithField("block-height", newBlockHeight).Info("work for new blockheight")
 		}
 	}
 }
@@ -179,6 +281,7 @@ func minerThread(threadID int) {
 			continue
 		}
 
+		workPool := currentPool
 		workID := currentWorkUnit.WorkId
 		reportTarget := currentWorkUnit.ReportTarget
 		workHeader := snowblossom.BlockHeader{
@@ -266,16 +369,17 @@ func minerThread(threadID int) {
 				workHeader.PowProof = powProofs
 				workHeader.SnowHash = snowContext
 
-				// todo: client threadsafe?
-				resp, err := client.SubmitWork(context.Background(), &mining_pool.WorkSubmitRequest{
+				reply, err := poolStates[workPool].Submit(&mining_pool.WorkSubmitRequest{
 					WorkId: workID,
 					Header: &workHeader,
 				})
-				log.Printf("%+v", resp)
-				log.Printf("%+v", err)
-			} /* else {
-				log.Println("Solution not passable")
-			} */
+				if err != nil {
+					log.WithError(err).Warn("share submission failed")
+					continue
+				}
+
+				log.WithField("reply", reply).Info("submitted!")
+			}
 		}
 	}
 }
