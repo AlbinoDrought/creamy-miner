@@ -2,6 +2,7 @@ package sblib_test
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"go.snowblossom/internal/sblib"
@@ -27,5 +28,43 @@ func TestGetNextContext(t *testing.T) {
 	newContext := sblib.GetNextContext(context, word, sblib.NewMessageDigest())
 	if hex.EncodeToString(newContext) != "db176f021b168412a05904e7e729a072943cc8a4f266a4579654b8aa0fecfb8b" {
 		t.Error("unexpected GetNextContext value")
+	}
+}
+
+func TestLessThanTarget(t *testing.T) {
+	tests := []struct {
+		foundHash string
+		target    string
+		want      bool
+	}{
+		{
+			"000001F5FA05E2E9599E976850469CB6A4084F9EE156F4D0894E4E281B00DE71",
+			"0000040000000000000000000000000000000000000000000000000000000000",
+			true,
+		},
+		{
+			"000011F5FA05E2E9599E976850469CB6A4084F9EE156F4D0894E4E281B00DE71",
+			"0000040000000000000000000000000000000000000000000000000000000000",
+			false,
+		},
+		{
+			"000003F5FA05E2E9599E976850469CB6A4084F9EE156F4D0894E4E281B00DE71",
+			"0000040000000000000000000000000000000000000000000000000000000000",
+			true,
+		},
+		{
+			"0000040000000000000000000000000000000000000000000000000000000000",
+			"0000040000000000000000000000000000000000000000000000000000000000",
+			false,
+		},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case #%v: %v vs %v is less: %v", i, tt.foundHash, tt.target, tt.want), func(t *testing.T) {
+			foundHashBytes, _ := hex.DecodeString(tt.foundHash)
+			targetBytes, _ := hex.DecodeString(tt.target)
+			if got := sblib.LessThanTarget(foundHashBytes, targetBytes); got != tt.want {
+				t.Errorf("LessThanTarget() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

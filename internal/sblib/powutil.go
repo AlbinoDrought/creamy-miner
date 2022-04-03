@@ -1,11 +1,11 @@
 package sblib
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"hash"
 
-	"go.snowblossom/internal/sbconst"
 	"go.snowblossom/internal/sbproto/snowblossom"
 )
 
@@ -106,16 +106,20 @@ func GetNextContext(prevContext []byte, foundData []byte, md hash.Hash) []byte {
 }
 
 func LessThanTarget(foundHash []byte, target []byte) bool {
-	// [removed quickly reject nonsense loop]
-
-	for i := 0; i < sbconst.TargetLength; i++ {
-		if foundHash[i] > target[i] {
-			return false
+	// Quickly reject nonsense
+	for i := 0; i < 8; i++ {
+		// If the target is not zero, done with loop
+		if target[i] != 0 {
+			break
 		}
-		if foundHash[i] < target[i] {
-			return true
+		// If the target is zero, but found is not, fail
+		if foundHash[i] != 0 {
+			return false
 		}
 	}
 
-	return true
+	if len(foundHash) != len(target) {
+		return false
+	}
+	return bytes.Compare(foundHash, target) == -1
 }
