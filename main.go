@@ -95,6 +95,7 @@ func main() {
 
 		loaded := 0
 		for line, envFileLine := range strings.Split(string(envFile), "\n") {
+			envFileLine = strings.TrimRight(envFileLine, "\r") // remove CR
 			if envFileLine == "" || envFileLine[0] == '#' {
 				continue
 			}
