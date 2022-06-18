@@ -5,13 +5,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash"
+	"sort"
 
 	"go.snowblossom/internal/sbproto/snowblossom"
 )
 
 func HashHeaderBits(header *snowblossom.BlockHeader, nonce []byte, md hash.Hash) ([]byte, error) {
-	if header.Version != 1 {
-		return nil, errors.New("only version 1 is supported")
+	if header.Version != 1 && header.Version != 2 {
+		return nil, errors.New("only versions 1 and 2 are supported")
 	}
 
 	md.Reset()
@@ -61,30 +62,90 @@ func HashHeaderBits(header *snowblossom.BlockHeader, nonce []byte, md hash.Hash)
 		return nil, err
 	}
 
-	/*
-		if header.Version == 2 {
+	if header.Version == 2 {
+		if _, err := md.Write([]byte{
+			byte(header.ShardId >> 24),
+			byte(header.ShardId >> 16),
+			byte(header.ShardId >> 8),
+			byte(header.ShardId & 0xFF),
+
+			byte(header.TxDataSizeSum >> 24),
+			byte(header.TxDataSizeSum >> 16),
+			byte(header.TxDataSizeSum >> 8),
+			byte(header.TxDataSizeSum & 0xFF),
+
+			byte(header.TxCount >> 24),
+			byte(header.TxCount >> 16),
+			byte(header.TxCount >> 8),
+			byte(header.TxCount & 0xFF),
+		}); err != nil {
+			return nil, err
+		}
+
+		// todo: maps are randomly ordered in golang
+		for id, value := range header.GetShardExportRootHash() {
 			if _, err := md.Write([]byte{
-				byte(header.GetShardId() >> 24),
-				byte(header.GetShardId() >> 16),
-				byte(header.GetShardId() >> 8),
-				byte(header.GetShardId() & 0xFF),
-
-				byte(header.GetTxDataSizeSum() >> 24),
-				byte(header.GetTxDataSizeSum() >> 16),
-				byte(header.GetTxDataSizeSum() >> 8),
-				byte(header.GetTxDataSizeSum() & 0xFF),
-
-				byte(header.GetTxCount() >> 24),
-				byte(header.GetTxCount() >> 16),
-				byte(header.GetTxCount() >> 8),
-				byte(header.GetTxCount() & 0xFF),
+				byte(id >> 24),
+				byte(id >> 16),
+				byte(id >> 8),
+				byte(id & 0xFF),
 			}); err != nil {
 				return nil, err
 			}
 
-			header.GetShardExportRootHash()
+			if _, err := md.Write(value); err != nil {
+				return nil, err
+			}
 		}
-	*/
+
+		i := 0
+		importShardIDs := make([]int32, len(header.ShardImport))
+		for importShardID := range header.ShardImport {
+			importShardIDs[i] = importShardID
+			i++
+		}
+		sort.Slice(importShardIDs, func(i, j int) bool {
+			return importShardIDs[i] < importShardIDs[j]
+		})
+
+		for importShardID, bil := range header.GetShardImport() {
+			i = 0
+			heightMapKeys := make([]int32, len(bil.HeightMap))
+			for heightMapKey := range bil.HeightMap {
+				heightMapKeys[i] = heightMapKey
+				i++
+			}
+			sort.Slice(heightMapKeys, func(i, j int) bool {
+				return heightMapKeys[i] < heightMapKeys[j]
+			})
+
+			for importHeight, value := range heightMapKeys {
+				if _, err := md.Write([]byte{
+					byte(importShardID >> 24),
+					byte(importShardID >> 16),
+					byte(importShardID >> 8),
+					byte(importShardID & 0xFF),
+
+					byte(importHeight >> 24),
+					byte(importHeight >> 16),
+					byte(importHeight >> 8),
+					byte(importHeight & 0xFF),
+				}); err != nil {
+					return nil, err
+				}
+
+				// java uses toByteArray, not sure if that is the same
+				if _, err := md.Write([]byte{
+					byte(value >> 24),
+					byte(value >> 16),
+					byte(value >> 8),
+					byte(value & 0xFF),
+				}); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 
 	return md.Sum(nil), nil
 }
